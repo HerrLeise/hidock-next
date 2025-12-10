@@ -237,10 +237,10 @@ class ToastNotification:
         message_label.pack(fill="both", expand=True, padx=15, pady=(0, 5))
         
         # Auto-dismiss timer
+        self.dismiss_after_id = None
         if self.duration > 0:
-            self.dismiss_timer = threading.Timer(self.duration / 1000.0, self.dismiss)
-            self.dismiss_timer.daemon = True
-            self.dismiss_timer.start()
+            # Use Tk's event loop instead of a background thread to avoid cross-thread Tk calls
+            self.dismiss_after_id = self.toast_window.after(self.duration, self.dismiss)
     
     def _position_toast(self):
         """Position the toast based on the specified position."""
@@ -301,6 +301,11 @@ class ToastNotification:
         # Cancel timer if running
         if self.dismiss_timer:
             self.dismiss_timer.cancel()
+        if self.toast_window and self.dismiss_after_id:
+            try:
+                self.toast_window.after_cancel(self.dismiss_after_id)
+            except Exception:
+                pass
         
         # Destroy window safely
         try:

@@ -357,6 +357,16 @@ class Logger:
         if not os.path.isabs(log_file_path):
             log_file_path = os.path.join(_APP_ROOT_DIR, "logs", log_file_path)
         
+        # Ensure the log directory exists before opening the file
+        log_dir = os.path.dirname(log_file_path)
+        if log_dir:
+            try:
+                os.makedirs(log_dir, exist_ok=True)
+            except OSError as e:
+                print(f"[ERROR] Logger::_setup_file_logging - Cannot create log directory {log_dir}: {e}")
+                self.log_file = None
+                return
+        
         # Rotate log file if it exists and exceeds max size
         self._rotate_log_file_if_needed(log_file_path)
         

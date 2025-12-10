@@ -12,7 +12,9 @@ echo ""
 echo "This will set up HiDock apps for immediate use."
 echo ""
 
-# Check Python
+# ----------------------------------------
+# 1/4 – Python prüfen / installieren
+# ----------------------------------------
 echo "[1/4] Checking Python..."
 if command -v python3 > /dev/null 2>&1; then
     PYTHON_CMD="python3"
@@ -42,12 +44,12 @@ else
     fi
 fi
 
-# Check Python version
+# Python-Version prüfen (min. 3.8)
 PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-# Convert version to comparable number (e.g., 3.8 -> 38, 3.12 -> 312)
 PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d'.' -f1)
 PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d'.' -f2)
 PYTHON_VER_NUM=$((PYTHON_MAJOR * 10 + PYTHON_MINOR))
+
 if [ "$PYTHON_VER_NUM" -lt 38 ]; then
     echo "❌ Python 3.8+ required, found $PYTHON_VERSION. Upgrading to 3.12..."
     echo "Continue? (y/N)"
@@ -70,93 +72,190 @@ if [ "$PYTHON_VER_NUM" -lt 38 ]; then
     fi
 fi
 
-# Set up Desktop App
+# ----------------------------------------
+# 2/4 – Systemabhängigkeiten + Build-Toolchain
+# ----------------------------------------
 echo ""
-echo "[2/4] Setting up Desktop App..."
-
-# Install system dependencies first
-echo "Installing system dependencies..."
+echo "[2/4] Installing system and build dependencies (libusb, tkinter, SDL2, freetype, compiler)..."
+echo "This may install development tools and libraries required for pygame."
 echo "Continue? (y/N)"
 read -r response
 if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
-    if command -v apt > /dev/null; then
+    if command -v apt > /dev/null 2>&1; then
         # Ubuntu/Debian
-        sudo apt update && sudo apt install -y \
+        sudo apt update
+        sudo apt install -y \
+            build-essential \
+            python3-dev \
             libusb-1.0-0-dev \
-            python3-tk
-    elif command -v dnf > /dev/null; then
-        # Fedora/RHEL 8+
-        sudo dnf install -y \
+            python3-tk \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-mixer-dev \
+            libsdl2-ttf-dev \
+            libfreetype6-dev \
+            pkg-config
+    elif command -v dnf > /dev/null 2>&1 || command -v dnf5 > /dev/null 2>&1; then
+        # Fedora/RHEL 8+/dnf5
+        DNF_CMD="dnf"
+        command -v dnf5 > /dev/null 2>&1 && DNF_CMD="dnf5"
+        # Install minimal toolchain (dnf5 may not support groupinstall yet)
+        sudo "$DNF_CMD" install -y \
+            gcc \
+            python3-devel \
             libusb1-devel \
-            tkinter
-    elif command -v yum > /dev/null; then
+            python3-tkinter \
+            SDL2-devel \
+            SDL2_image-devel \
+            SDL2_mixer-devel \
+            SDL2_ttf-devel \
+            freetype-devel \
+            pkgconf-pkg-config
+        sudo "$DNF_CMD" install -y python3-tkinter tk
+    elif command -v yum > /dev/null 2>&1; then
         # CentOS/RHEL 7
+        sudo yum groupinstall -y "Development Tools" || true
         sudo yum install -y \
+            gcc \
+            python3-devel \
             libusb1-devel \
-            tkinter
-    elif command -v brew > /dev/null; then
-        # macOS
-        brew install libusb
-        # tkinter comes with Python on macOS
-    elif command -v pacman > /dev/null; then
+            tkinter \
+            SDL2-devel \
+            SDL2_image-devel \
+            SDL2_mixer-devel \
+            SDL2_ttf-devel \
+            freetype-devel \
+            pkgconfig
+    elif command -v pacman > /dev/null 2>&1; then
         # Arch Linux
+        sudo pacman -Syu --noconfirm
         sudo pacman -S --noconfirm \
+            base-devel \
+            python \
             libusb \
-            python-tkinter
+            python-tkinter \
+            sdl2 \
+            sdl2_image \
+            sdl2_mixer \
+            sdl2_ttf \
+            freetype2 \
+            pkgconf
+    elif command -v brew > /dev/null 2>&1; then
+        # macOS (Homebrew)
+        brew update
+        brew install \
+            libusb \
+            sdl2 \
+            sdl2_image \
+            sdl2_mixer \
+            sdl2_ttf \
+            freetype
+        # tkinter kommt i.d.R. mit Python auf macOS
     else
-        echo "⚠️  Cannot auto-install system packages. Please install manually:"
-        echo "  - libusb development libraries (for USB device access)"
-        echo "  - tkinter/python3-tk (for GUI)"
+        echo "⚠️  Cannot auto-install system packages."
+        echo "Please install at least:"
+        echo "  - C compiler + build tools"
+        echo "  - python3-dev / python3-devel"
+        echo "  - libusb dev libraries"
+        echo "  - tkinter / python3-tk"
+        echo "  - SDL2 (dev), SDL2_image, SDL2_mixer, SDL2_ttf"
+        echo "  - freetype dev libraries"
+        echo "  - pkg-config"
     fi
-    echo "✅ System dependencies installed!"
+    echo "✅ System & build dependencies step finished (check above for any warnings)."
 else
-    echo "⚠️  Skipping system dependencies. Some features may not work."
+    echo "⚠️  Skipping system/build dependencies. pygame build may fail."
 fi
+
+# ----------------------------------------
+# 2b/4 – Optional: install udev rule for HiDock USB access (Linux)
+# ----------------------------------------
+if [ "$(uname)" = "Linux" ]; then
+    echo ""
+    echo "[2b/4] Install udev rule for HiDock USB access (adds 99-hidock.rules, needs sudo)? (y/N)"
+    read -r response
+    if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
+        # Consolidated rule covering all known PIDs
+        UDEV_RULE_CONTENT='
+# HiDock USB Device Access Rules
+SUBSYSTEM=="usb", ATTR{idVendor}=="10d6", ATTR{idProduct}=="af0c", MODE="0666", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="10d6", ATTR{idProduct}=="af0d", MODE="0666", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="10d6", ATTR{idProduct}=="b00d", MODE="0666", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="10d6", ATTR{idProduct}=="af0e", MODE="0666", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="10d6", ATTR{idProduct}=="b00e", MODE="0666", GROUP="dialout", TAG+="uaccess"
+# Fallback for any Actions Semiconductor HiDock devices
+SUBSYSTEM=="usb", ATTR{idVendor}=="10d6", MODE="0666", GROUP="dialout", TAG+="uaccess"
+'
+        echo "Writing udev rule to /etc/udev/rules.d/99-hidock.rules ..."
+        printf "%s" "$UDEV_RULE_CONTENT" | sudo tee /etc/udev/rules.d/99-hidock.rules >/dev/null || {
+            echo "❌ Failed to write udev rule (sudo/permission issue)"; exit 1; }
+        echo "Reloading udev rules..."
+        sudo udevadm control --reload-rules && sudo udevadm trigger || \
+            echo "⚠️  udev reload/trigger failed; you may need to replug the device or reboot"
+        echo "✅ udev rule installed."
+    else
+        echo "ℹ️ Skipping udev rule install. You may need to run the app with sudo or add the rule manually for USB access."
+    fi
+fi
+
+# ----------------------------------------
+# Desktop-App: venv + Python-Dependencies
+# ----------------------------------------
+echo ""
+echo "[3/4] Setting up Desktop App (virtualenv + Python deps)..."
 
 cd apps/desktop || {
     echo "❌ Failed to navigate to apps/desktop directory"
     exit 1
 }
 
-echo "Resolving per-platform virtual environment (selector)..."
-VENV_PATH=$(python scripts/env/select_venv.py --print 2>/dev/null || true)
-if [ -z "$VENV_PATH" ]; then
-  echo "Creating/ensuring environment..."
-  VENV_PATH=$(python scripts/env/select_venv.py --ensure --print 2>/dev/null || true)
+echo "Setting up local virtual environment in apps/desktop/.venv.nix ..."
+VENV_PATH=".venv.nix"
+
+if [ ! -d "$VENV_PATH" ]; then
+  echo "Creating virtual environment at: $PWD/$VENV_PATH"
+  "$PYTHON_CMD" -m venv "$VENV_PATH" || {
+    echo "❌ Failed to create virtual environment"; exit 1; }
 fi
 
-if [ -z "$VENV_PATH" ]; then
-  echo "❌ Failed to resolve virtual environment path."
-  echo "Run manually: python scripts/env/select_venv.py --ensure --print"
+if [ ! -x "$VENV_PATH/bin/python" ]; then
+  echo "❌ python executable missing inside venv (corrupted). Recreating..."
+  rm -rf "$VENV_PATH"
+  "$PYTHON_CMD" -m venv "$VENV_PATH" || {
+    echo "❌ Recreate failed"; exit 1; }
+fi
+
+echo "Using environment: $PWD/$VENV_PATH"
+
+# Ensure pip exists inside the venv (some distros disable ensurepip by default)
+if ! "$VENV_PATH/bin/python" -m pip --version >/dev/null 2>&1; then
+  echo "Bootstrapping pip inside the virtual environment..."
+  "$VENV_PATH/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+fi
+if ! "$VENV_PATH/bin/python" -m pip --version >/dev/null 2>&1; then
+  echo "❌ pip is still unavailable inside the virtual environment."
+  echo "Please install the system pip package (e.g., python3-pip) and rerun setup-unix.sh."
   exit 1
 fi
 
-if [ ! -d "$VENV_PATH" ]; then
-  echo "Environment directory missing, creating..."
-  python scripts/env/select_venv.py --ensure || {
-    echo "❌ Environment creation failed"; exit 1; }
-fi
-
-echo "Using environment: $VENV_PATH"
-if [ ! -f "$VENV_PATH/bin/python" ]; then
-  echo "❌ python executable missing inside venv (corrupted). Recreating..."
-  rm -rf "$VENV_PATH"
-  python scripts/env/select_venv.py --ensure || { echo "❌ Recreate failed"; exit 1; }
-fi
-
 echo "Upgrading pip and build tooling..."
-"$VENV_PATH/bin/python" -m pip install --upgrade pip setuptools wheel || echo "⚠️  pip upgrade failed (continuing)"
+"$VENV_PATH/bin/python" -m pip install --upgrade pip setuptools wheel || \
+  echo "⚠️  pip upgrade failed (continuing)"
 
 echo "Installing desktop dependencies (editable, dev extras)..."
-"$VENV_PATH/bin/python" -m pip install -e "apps/desktop[dev]" || {
+# Wir sind in apps/desktop, daher reicht ".[dev]"
+"$VENV_PATH/bin/python" -m pip install -e ".[dev]" || {
   echo "❌ Failed to install desktop dependencies"; exit 1; }
 
 echo "✅ Desktop app setup complete!"
 
-
-# Check Node.js for Web Apps
+# ----------------------------------------
+# Node.js / Web-Apps
+# ----------------------------------------
 echo ""
-echo "[3/4] Checking Node.js for Web Apps..."
+echo "[4/4] Checking Node.js for Web Apps..."
+WEB_APP_READY=false
+
 if command -v node > /dev/null 2>&1; then
     NODE_VERSION=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
     if [ "$NODE_VERSION" -ge 18 ]; then
@@ -209,14 +308,13 @@ else
             echo "❌ Cannot auto-install Node.js. Please install manually."
             WEB_APP_READY=false
         fi
-        
-        # Check if installation succeeded
+
         if command -v node > /dev/null 2>&1; then
             NODE_VERSION=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
             if [ "$NODE_VERSION" -ge 18 ]; then
                 echo "✓ Node.js installed! Setting up web apps..."
                 WEB_APP_READY=true
-                
+
                 echo "Setting up HiDock Web App..."
                 cd ../web || {
                     echo "⚠️  WARNING: Failed to navigate to apps/web"
@@ -258,9 +356,12 @@ else
     fi
 fi
 
-# Complete
+# ----------------------------------------
+# Abschluss / Hinweise
+# ----------------------------------------
 echo ""
-echo "[4/4] Setup Complete!"
+echo "================================"
+echo "Setup Complete!"
 echo "================================"
 echo ""
 echo "🚀 HOW TO RUN:"
@@ -286,13 +387,13 @@ echo "• Check README.md and docs/TROUBLESHOOTING.md for help"
 
 # Linux USB permissions check
 if [ "$(uname)" = "Linux" ]; then
-    if ! groups $USER | grep -q "dialout"; then
+    if ! groups "$USER" | grep -q "dialout"; then
         echo ""
         echo "⚠️  Setting up USB permissions for HiDock device access..."
         echo "Continue? (y/N)"
         read -r response
         if case "$response" in [Yy]*) true;; *) false;; esac; then
-            sudo usermod -a -G dialout $USER
+            sudo usermod -a -G dialout "$USER"
             echo "✅ USB permissions configured. Please log out and back in for changes to take effect."
         else
             echo "⚠️  USB permissions not configured. You may need to run manually:"
@@ -302,7 +403,7 @@ if [ "$(uname)" = "Linux" ]; then
 fi
 
 echo ""
-echo "🔧 NEED MORE? Run: python setup.py (comprehensive setup)"
+echo "🔧 NEED MORE? Run (optional, outside venv): $PYTHON_CMD setup.py"
 echo ""
 echo "Enjoy using HiDock! 🎵"
 echo ""

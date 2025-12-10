@@ -61,7 +61,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self.title("Application Settings")
         self.transient(parent_gui)
         self.withdraw()  # Start hidden to prevent flicker
-        self.grab_set()
+        self._grab_retry_attempts = 0  # Track grab attempts to avoid endless retries
 
         self._settings_dialog_initializing = True  # Flag to prevent premature updates
         # Settings are saved atomically when changed - no change tracking
@@ -135,6 +135,28 @@ class SettingsDialog(ctk.CTkToplevel):
         self.minsize(min_width, min_height)
         self.deiconify()  # Show window after positioning
         self.focus_set()
+        self.after(0, self._apply_modal_grab)
+
+    def _apply_modal_grab(self):
+        """
+        Apply a modal grab once the window is viewable to avoid TclError when hidden.
+        Retries a few times if the window is not yet mapped.
+        """
+        if self._grab_retry_attempts > 5:
+            logger.warning("SettingsDialog", "_apply_modal_grab", "Failed to apply grab after retries.")
+            return
+
+        if not self.winfo_viewable():
+            self._grab_retry_attempts += 1
+            self.after(50, self._apply_modal_grab)
+            return
+
+        try:
+            self.grab_set()
+        except tkinter.TclError as e:
+            self._grab_retry_attempts += 1
+            logger.warning("SettingsDialog", "_apply_modal_grab", f"Grab failed (attempt {self._grab_retry_attempts}): {e}")
+            self.after(50, self._apply_modal_grab)
 
     def _clone_parent_vars(self):
         """Clones relevant CTk Variables from the parent GUI for local modification and reset."""
